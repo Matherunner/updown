@@ -15,16 +15,16 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            output: app-linux-amd64
+            output: updown-linux-amd64
 
           - os: windows-latest
-            output: app-windows-amd64.exe
+            output: updown-windows-amd64.exe
 
           - os: macos-13
-            output: app-darwin-amd64
+            output: updown-darwin-amd64
 
           - os: macos-latest
-            output: app-darwin-arm64
+            output: updown-darwin-arm64
 
     steps:
     - uses: actions/checkout@v4
