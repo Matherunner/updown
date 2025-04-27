@@ -1,0 +1,49 @@
+name: Build Go Binaries
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            output: app-linux-amd64
+
+          - os: windows-latest
+            goarch: amd64
+            output: app-windows-amd64.exe
+
+          - os: macos-13
+            goarch: amd64
+            output: app-darwin-amd64
+
+          - os: macos-latest
+            goarch: arm64
+            output: app-darwin-arm64
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build for ${{ matrix.goos }}/${{ matrix.goarch }}
+      run: |
+        mkdir -p dist
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o dist/${{ matrix.output }}
+
+    - name: Upload artifact for ${{ matrix.goos }}/${{ matrix.goarch }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.output }}
+        path: dist/${{ matrix.output }}
