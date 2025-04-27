@@ -7,6 +7,8 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"os"
+	"path"
 	"time"
 )
 
@@ -53,7 +55,23 @@ func handleUploadPost(w http.ResponseWriter, r *http.Request) {
 		if part.FormName() != "file" {
 			return false, nil
 		}
-		_, err = io.Copy(io.Discard, part)
+
+		fileName := path.Base(part.FileName())
+
+		log.Printf("Receive upload of file name %s. Writing to %s.", part.FileName(), fileName)
+
+		file, err := os.Create(fileName)
+		if err != nil {
+			return false, err
+		}
+		defer func(file *os.File) {
+			err := file.Close()
+			if err != nil {
+				log.Printf("Unable to close file: %v", err)
+			}
+		}(file)
+
+		_, err = io.Copy(file, part)
 		if err != nil {
 			return false, err
 		}
