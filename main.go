@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"html/template"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"time"
 )
 
@@ -57,10 +59,11 @@ func handleUploadPost(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fileName := path.Base(part.FileName())
+		outputPath := path.Join(*outputDir, fileName)
 
-		log.Printf("Receive upload of file name %s. Writing to %s.", part.FileName(), fileName)
+		log.Printf("Receive upload of file name %s. Writing to %s.", part.FileName(), outputPath)
 
-		file, err := os.Create(fileName)
+		file, err := os.Create(outputPath)
 		if err != nil {
 			return false, err
 		}
@@ -138,9 +141,16 @@ func (l *loggerMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	l.Handler.ServeHTTP(w, r)
 }
 
+var outputDir *string
+
 func main() {
+	portNum := flag.Int("p", 6600, "port number")
+	outputDir = flag.String("o", ".", "output directory")
+	flag.Parse()
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", routeByMethod(ByMethod{Get: handleRootGet}))
 	mux.HandleFunc("/upload", routeByMethod(ByMethod{Post: handleUploadPost}))
-	log.Fatal(http.ListenAndServe(":32001", &loggerMiddleware{Handler: mux}))
+	log.Printf("Listening to port %v", *portNum)
+	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(*portNum), &loggerMiddleware{Handler: mux}))
 }
