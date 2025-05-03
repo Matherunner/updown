@@ -8,6 +8,7 @@ import (
 	"log"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"strconv"
@@ -19,6 +20,7 @@ var tmplRoot = template.Must(template.New("Root").Parse(`
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<title>Updown</title>
 	</head>
 	<body>
@@ -28,14 +30,85 @@ var tmplRoot = template.Must(template.New("Root").Parse(`
 			<input type="file" name="file">
 			<button type="submit">Upload</button>
 		</form>
+		<h2>Serving files</h2>
+		<ul>
+		{{range .Files}}
+			<li><a href="{{.URL}}">{{.Name}}</a> {{.Type}}</li>
+		{{end}}
+		</ul>
 	</body>
 </html>
 `))
 
+func getQueryValueOrDefault(query url.Values, key, fallback string) string {
+	values := query[key]
+	if len(values) == 0 {
+		return fallback
+	}
+	value := values[0]
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+type fileEntry struct {
+	URL  string
+	Name string
+	Type string
+}
+
+func addQueryToPath(urlPath string, query map[string]string) (string, error) {
+	parsed, err := url.Parse(urlPath)
+	if err != nil {
+		return "", err
+	}
+	q := parsed.Query()
+	for k, v := range query {
+		q.Set(k, v)
+	}
+	parsed.RawQuery = q.Encode()
+	return parsed.String(), nil
+}
+
 func handleRootGet(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/":
-		err := tmplRoot.Execute(w, nil)
+		query := r.URL.Query()
+		servePathRoot := getQueryValueOrDefault(query, "p", ".")
+
+		entries, err := os.ReadDir(path.Join(*serveDir, servePathRoot))
+		if err != nil {
+			http.Error(w, "", http.StatusInternalServerError)
+			return
+		}
+
+		entryURL, err := addQueryToPath("/", map[string]string{"p": path.Join(servePathRoot, "..")})
+		if err != nil {
+			http.Error(w, "", http.StatusInternalServerError)
+			return
+		}
+		fileEntries := []fileEntry{{URL: entryURL, Name: "..", Type: "<DIR>"}}
+		for _, entry := range entries {
+			var entryType string
+			if entry.IsDir() {
+				entryURL, err = addQueryToPath("/", map[string]string{"p": path.Join(servePathRoot, entry.Name())})
+				entryType = "<DIR>"
+			} else {
+				entryURL, err = addQueryToPath("/download", map[string]string{"p": path.Join(servePathRoot, entry.Name())})
+			}
+			if err != nil {
+				http.Error(w, "", http.StatusInternalServerError)
+				return
+			}
+			fileEntries = append(fileEntries, fileEntry{URL: entryURL, Name: entry.Name(), Type: entryType})
+		}
+
+		tmplData := map[string]any{
+			"Files": fileEntries,
+		}
+
+		err = tmplRoot.Execute(w, tmplData)
 		if err != nil {
 			http.Error(w, "", http.StatusInternalServerError)
 			return
@@ -43,6 +116,30 @@ func handleRootGet(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func handleDownloadGet(w http.ResponseWriter, r *http.Request) {
+	inputPath := getQueryValueOrDefault(r.URL.Query(), "p", ".")
+	fsPath := path.Join(*serveDir, inputPath)
+	file, err := os.Open(fsPath)
+	if err != nil {
+		http.Error(w, "", http.StatusInternalServerError)
+		return
+	}
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+			log.Printf("Unable to close file: %v", err)
+		}
+	}(file)
+	w.Header().Add("content-type", "application/octet-stream")
+	w.Header().Add("content-disposition", "attachment; filename=\""+path.Base(fsPath)+"\"")
+	_, err = io.Copy(w, file)
+	if err != nil {
+		http.Error(w, "", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleUploadPost(w http.ResponseWriter, r *http.Request) {
@@ -141,16 +238,21 @@ func (l *loggerMiddleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	l.Handler.ServeHTTP(w, r)
 }
 
-var outputDir *string
+var (
+	outputDir *string
+	serveDir  *string
+)
 
 func main() {
 	portNum := flag.Int("p", 6600, "port number")
 	outputDir = flag.String("o", ".", "output directory")
+	serveDir = flag.String("s", ".", "directory to serve")
 	flag.Parse()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", routeByMethod(ByMethod{Get: handleRootGet}))
 	mux.HandleFunc("/upload", routeByMethod(ByMethod{Post: handleUploadPost}))
+	mux.HandleFunc("/download", routeByMethod(ByMethod{Get: handleDownloadGet}))
 	log.Printf("Listening to port %v", *portNum)
 	log.Fatal(http.ListenAndServe(":"+strconv.Itoa(*portNum), &loggerMiddleware{Handler: mux}))
 }
