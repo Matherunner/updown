@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"time"
 )
@@ -22,6 +23,15 @@ var tmplRoot = template.Must(template.New("Root").Parse(`
 		<meta charset="utf-8">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		<title>Updown</title>
+		<style>
+			a {
+				text-decoration: none;
+			}
+
+			a:hover {
+				text-decoration: underline;
+			}
+		</style>
 	</head>
 	<body>
 		<h1>Updown</h1>
@@ -31,6 +41,7 @@ var tmplRoot = template.Must(template.New("Root").Parse(`
 			<button type="submit">Upload</button>
 		</form>
 		<h2>Serving files</h2>
+		<p>Path: {{.FullPath}}</p>
 		<ul>
 		{{range .Files}}
 			<li><a href="{{.URL}}">{{.Name}}</a> {{.Type}}</li>
@@ -76,8 +87,13 @@ func handleRootGet(w http.ResponseWriter, r *http.Request) {
 	case "/":
 		query := r.URL.Query()
 		servePathRoot := getQueryValueOrDefault(query, "p", ".")
+		fullPath, err := filepath.Abs(path.Join(*serveDir, servePathRoot))
+		if err != nil {
+			http.Error(w, "", http.StatusInternalServerError)
+			return
+		}
 
-		entries, err := os.ReadDir(path.Join(*serveDir, servePathRoot))
+		entries, err := os.ReadDir(fullPath)
 		if err != nil {
 			http.Error(w, "", http.StatusInternalServerError)
 			return
@@ -88,24 +104,30 @@ func handleRootGet(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "", http.StatusInternalServerError)
 			return
 		}
-		fileEntries := []fileEntry{{URL: entryURL, Name: "..", Type: "<DIR>"}}
+		fileEntries := []fileEntry{{URL: entryURL, Name: "../", Type: "<DIR>"}}
 		for _, entry := range entries {
-			var entryType string
+			var (
+				entryType string
+				fileName  string
+			)
 			if entry.IsDir() {
 				entryURL, err = addQueryToPath("/", map[string]string{"p": path.Join(servePathRoot, entry.Name())})
 				entryType = "<DIR>"
+				fileName = entry.Name() + "/"
 			} else {
 				entryURL, err = addQueryToPath("/download", map[string]string{"p": path.Join(servePathRoot, entry.Name())})
+				fileName = entry.Name()
 			}
 			if err != nil {
 				http.Error(w, "", http.StatusInternalServerError)
 				return
 			}
-			fileEntries = append(fileEntries, fileEntry{URL: entryURL, Name: entry.Name(), Type: entryType})
+			fileEntries = append(fileEntries, fileEntry{URL: entryURL, Name: fileName, Type: entryType})
 		}
 
 		tmplData := map[string]any{
-			"Files": fileEntries,
+			"FullPath": fullPath,
+			"Files":    fileEntries,
 		}
 
 		err = tmplRoot.Execute(w, tmplData)
